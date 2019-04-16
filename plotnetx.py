@@ -83,9 +83,35 @@ def _normalize_positions(g):
 
     for n in g.nodes:
         pos = g.nodes[n]['pos']
-        x = (pos[0] - xmin) / (xmax - xmin)
-        y = (pos[1] - ymin) / (ymax - ymin)
+        x = (pos[0] - xmin) / xmax
+        y = (pos[1] - ymin) / ymax
         g.nodes[n]['pos'] = (x, y)
+
+
+def _build_graph_key(g):
+    local_width = g.graph['width'] if 'width' in g.graph else graph_width
+    local_height = g.graph['height'] if 'height' in g.graph else graph_height
+
+    return local_width, local_height
+
+
+def _build_node_key(g, n):
+    size = g.nodes[n]['size'] if 'size' in g.nodes[n] else node_size
+    color = g.nodes[n]['color'] if 'color' in g.nodes[n] else node_color
+    labpos = g.nodes[n]['labpos'] if 'labpos' in g.nodes[n] else node_labpos
+
+    return size, color, labpos
+
+
+def _build_edge_key(g, n, m):
+    size = g.nodes[m]['size'] if 'size' in g.nodes[m] else node_size
+    width = g.edges[n, m]['width'] if 'width' in g.edges[n, m] else edge_width
+    color = g.edges[n, m]['color'] if 'color' in g.edges[n, m] else edge_color
+    labfrac = g.edges[n, m]['labfrac'] if 'labfrac' in g.edges[n, m] else edge_labfrac
+    labflip = g.edges[n, m]['labflip'] if 'labflip' in g.edges[n, m] else edge_labflip
+    labdist = g.edges[n, m]['labdist'] if 'labdist' in g.edges[n, m] else edge_labdist
+
+    return size, width, color, labfrac, labflip, labdist
 
 
 def _build_node_trace(size, color, labpos):
@@ -221,11 +247,7 @@ def _add_edge(g, width, height, n, m, local_size, local_width, edge_trace, edge_
         dx = x0 - x1
         dy = y0 - y1
 
-        # adjustment estimated from screenshots
-        radius = (local_size + local_width) / 1.8
-
-        if g.has_edge(m, n):
-            radius -= space
+        radius = local_size / 2 + edge_width - (space if g.has_edge(m, n) else 0)
 
         s = _scale(dx, dy, width, height, radius)
         x0 = x1 + s * dx
@@ -247,42 +269,82 @@ def _add_edge(g, width, height, n, m, local_size, local_width, edge_trace, edge_
             edge_trace['y'].extend([y0, y1, None])
 
 
+def set_nodes(g, key, value):
+    for n in g.nodes:
+        g.nodes[n][key] = value
+
+def set_nodes_size(g, value=node_size):
+    set_nodes(g, 'size', value)
+
+def set_nodes_color(g, value=node_color):
+    set_nodes(g, 'color', value)
+
+def set_nodes_labpos(g, value=node_labpos):
+    set_nodes(g, 'labpos', value)
+
+
+def set_edges(g, key, value):
+    for n, m in g.edges:
+        g.nodes[n, m][key] = value
+
+def set_edges_width(g, value=edge_width):
+    set_edges(g, 'width', value)
+
+def set_edges_color(g, value=edge_color):
+    set_edges(g, 'color', value)
+
+def set_edges_labfrac(g, value=edge_labfrac):
+    set_edges(g, 'labfrac', value)
+
+def set_edges_labflip(g, value=edge_labflip):
+    set_edges(g, 'labflip', value)
+
+def set_edges_labdist(g, value=edge_labdist):
+    set_edges(g, 'labdist', value)
+
+
 def label(g):
     for n in g.nodes:
         g.nodes[n]['label'] = str(n)
 
 
-def load(path, layout=None, *args, **kwargs):
+def move(g, key, *args, **kwargs):
+    layout = NX_LAYOUTS[key]
+
+    for n, pos in layout(g, *args, **kwargs).items():
+        g.nodes[n]['pos'] = pos
+
+    _normalize_positions(g)
+
+
+def load(path, layout='random', *args, **kwargs):
     g = networkx.read_gml(path, label='id')
 
     has_positions = True
     for n in g.nodes:
-        if 'x' in g.nodes[n] and 'y' in g.nodes[n]:
-            g.nodes[n]['pos'] = (g.nodes[n]['x'], g.nodes[n]['y'])
-            del g.nodes[n]['x']
-            del g.nodes[n]['y']
-        else:
+        if 'x' not in g.nodes[n] or 'y' not in g.nodes[n]:
             has_positions = False
             break
 
-    if not has_positions:
-        for n, pos in NX_LAYOUTS[layout](g, *args, **kwargs).items():
-            g.nodes[n]['pos'] = pos
+    if has_positions:
+        for n in g.nodes:
+            g.nodes[n]['pos'] = (g.nodes[n]['x'], g.nodes[n]['y'])
+            del g.nodes[n]['x']
+            del g.nodes[n]['y']
 
-    _normalize_positions(g)
+        _normalize_positions(g)
+    else:
+        move(g, layout, *args, **kwargs)
 
     return g
 
 
 def show(g, toolbar=False):
-    local_width = g.graph['width'] if 'width' in g.graph else graph_width
-    local_height = g.graph['height'] if 'height' in g.graph else graph_height
+    local_width, local_height = _build_graph_key(g)
 
     node_traces = {}
     for n in g.nodes:
-        size = g.nodes[n]['size'] if 'size' in g.nodes[n] else node_size
-        color = g.nodes[n]['color'] if 'color' in g.nodes[n] else node_color
-        labpos = g.nodes[n]['labpos'] if 'labpos' in g.nodes[n] else node_labpos
+        size, color, labpos = _build_node_key(g, n)
         key = (size, color, labpos)
         if key not in node_traces:
             node_traces[key] = _build_node_trace(size, color, labpos)
@@ -291,12 +353,7 @@ def show(g, toolbar=False):
     edge_traces = {}
     edge_label_trace = _build_edge_label_trace()
     for n, m in g.edges:
-        size = g.nodes[m]['size'] if 'size' in g.nodes[m] else node_size
-        width = g.edges[n, m]['width'] if 'width' in g.edges[n, m] else edge_width
-        color = g.edges[n, m]['color'] if 'color' in g.edges[n, m] else edge_color
-        labfrac = g.edges[n, m]['labfrac'] if 'labfrac' in g.edges[n, m] else edge_labfrac
-        labflip = g.edges[n, m]['labflip'] if 'labflip' in g.edges[n, m] else edge_labflip
-        labdist = g.edges[n, m]['labdist'] if 'labdist' in g.edges[n, m] else edge_labdist
+        size, width, color, labfrac, labflip, labdist = _build_edge_key(g, n, m)
         key = (width, color, labfrac, labflip, labdist)
         if key not in edge_traces:
             edge_traces[key] = _build_edge_trace(width, color)
@@ -306,9 +363,15 @@ def show(g, toolbar=False):
     data.append(edge_label_trace)
     data.extend(node_traces.values())
 
+    layout = _build_layout(local_width, local_height)
+
+    if isinstance(g, networkx.DiGraph):
+        layout['xaxis']['fixedrange'] = True
+        layout['yaxis']['fixedrange'] = True
+
     figure = {
         'data': data,
-        'layout': _build_layout(local_width, local_height),
+        'layout': layout,
     }
 
     plotly.offline.iplot(figure, config={'displayModeBar': toolbar}, show_link=False)
@@ -319,14 +382,11 @@ def setup():
 
 
 def snap(g):
-    local_width = g.graph['width'] if 'width' in g.graph else graph_width
-    local_height = g.graph['height'] if 'height' in g.graph else graph_height
+    local_width, local_height = _build_graph_key(g)
 
     node_traces = []
     for n in g.nodes:
-        size = g.nodes[n]['size'] if 'size' in g.nodes[n] else node_size
-        color = g.nodes[n]['color'] if 'color' in g.nodes[n] else node_color
-        labpos = g.nodes[n]['labpos'] if 'labpos' in g.nodes[n] else node_labpos
+        size, color, labpos = _build_node_key(g, n)
         node_trace = _build_node_trace(size, color, labpos)
         node_traces.append(node_trace)
         _add_node(g, n, node_trace)
@@ -334,12 +394,7 @@ def snap(g):
     edge_traces = []
     edge_label_trace = _build_edge_label_trace()
     for n, m in g.edges:
-        size = g.nodes[m]['size'] if 'size' in g.nodes[m] else node_size
-        width = g.edges[n, m]['width'] if 'width' in g.edges[n, m] else edge_width
-        color = g.edges[n, m]['color'] if 'color' in g.edges[n, m] else edge_color
-        labfrac = g.edges[n, m]['labfrac'] if 'labfrac' in g.edges[n, m] else edge_labfrac
-        labflip = g.edges[n, m]['labflip'] if 'labflip' in g.edges[n, m] else edge_labflip
-        labdist = g.edges[n, m]['labdist'] if 'labdist' in g.edges[n, m] else edge_labdist
+        size, width, color, labfrac, labflip, labdist = _build_edge_key(g, n, m)
         edge_trace = _build_edge_trace(width, color)
         edge_traces.append(edge_trace)
         _add_edge(g, local_width, local_height, n, m, size, width, edge_trace, edge_label_trace, labfrac, labflip, labdist)
@@ -358,6 +413,9 @@ def snap(g):
 
 
 def play():
+    if not _frames:
+        raise ValueError('no frames')
+
     number_of_nodes = _frames[0]['number_of_nodes']
     number_of_edges = _frames[0]['number_of_edges']
     width = _frames[0]['width']
