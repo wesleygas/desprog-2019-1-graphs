@@ -1,7 +1,7 @@
 import plotly
 import networkx
 
-from math import sqrt, cos, sin
+from math import isinf, sqrt, cos, sin
 
 
 EDGE_SPACE = 2
@@ -24,6 +24,10 @@ _frames = []
 
 graph_width = 800
 graph_height = 450
+graph_bottom = 0
+graph_left = 0
+graph_right = 0
+graph_top = 0
 
 node_size = 20
 node_color = (255, 255, 255)
@@ -32,8 +36,8 @@ node_labpos = 'middle center'
 edge_width = 1
 edge_color = (0, 0, 0)
 edge_labfrac = 0.5
-edge_labflip = False
 edge_labdist = 10
+edge_labflip = False
 
 
 def _scale(dx, dy, width, height, size):
@@ -91,8 +95,12 @@ def _normalize_positions(g):
 def _build_graph_key(g):
     local_width = g.graph['width'] if 'width' in g.graph else graph_width
     local_height = g.graph['height'] if 'height' in g.graph else graph_height
+    local_bottom = g.graph['bottom'] if 'bottom' in g.graph else graph_bottom
+    local_left = g.graph['left'] if 'left' in g.graph else graph_left
+    local_right = g.graph['right'] if 'right' in g.graph else graph_right
+    local_top = g.graph['top'] if 'top' in g.graph else graph_top
 
-    return local_width, local_height
+    return local_width, local_height, local_bottom, local_left, local_right, local_top
 
 
 def _build_node_key(g, n):
@@ -108,10 +116,10 @@ def _build_edge_key(g, n, m):
     width = g.edges[n, m]['width'] if 'width' in g.edges[n, m] else edge_width
     color = g.edges[n, m]['color'] if 'color' in g.edges[n, m] else edge_color
     labfrac = g.edges[n, m]['labfrac'] if 'labfrac' in g.edges[n, m] else edge_labfrac
-    labflip = g.edges[n, m]['labflip'] if 'labflip' in g.edges[n, m] else edge_labflip
     labdist = g.edges[n, m]['labdist'] if 'labdist' in g.edges[n, m] else edge_labdist
+    labflip = g.edges[n, m]['labflip'] if 'labflip' in g.edges[n, m] else edge_labflip
 
-    return size, width, color, labfrac, labflip, labdist
+    return size, width, color, labfrac, labdist, labflip
 
 
 def _build_node_trace(size, color, labpos):
@@ -138,12 +146,27 @@ def _build_node_trace(size, color, labpos):
             'size': size,
             'color': _convert(color),
             'line': {
-                'width': edge_width,
-                'color': _convert(edge_color),
+                'width': 1,
+                'color': 'rgb(0, 0, 0)',
             },
         },
         'textfont': {
             'color': _convert(fontcolor),
+        },
+    }
+
+
+def _build_node_label_trace(width, height, bottom, left, right, top):
+    return {
+        'x': [0.5, -left / width, 1 + right / width, 0.5],
+        'y': [-bottom / height, 0.5, 0.5, 1 + top / height],
+        'hoverinfo': 'none',
+        'mode': 'markers',
+        'marker': {
+            'color': 'rgba(0, 0, 0, 0.0)',
+            'line': {
+                'width': 0,
+            },
         },
     }
 
@@ -210,7 +233,7 @@ def _add_node(g, n, node_trace):
     node_trace['text'].append(text)
 
 
-def _add_edge(g, width, height, n, m, local_size, local_width, edge_trace, edge_label_trace, labfrac, labflip, labdist):
+def _add_edge(g, width, height, n, m, local_size, local_width, edge_trace, edge_label_trace, labfrac, labdist, labflip):
     x0, y0 = g.nodes[n]['pos']
     x1, y1 = g.nodes[m]['pos']
 
@@ -247,7 +270,7 @@ def _add_edge(g, width, height, n, m, local_size, local_width, edge_trace, edge_
         dx = x0 - x1
         dy = y0 - y1
 
-        radius = local_size / 2 + edge_width - (space if g.has_edge(m, n) else 0)
+        radius = (local_size / 2)
 
         s = _scale(dx, dy, width, height, radius)
         x0 = x1 + s * dx
@@ -269,6 +292,11 @@ def _add_edge(g, width, height, n, m, local_size, local_width, edge_trace, edge_
             edge_trace['y'].extend([y0, y1, None])
 
 
+def unset_nodes(g, key):
+    for n in g.nodes:
+        if key in g.nodes[n]:
+            del g.nodes[n][key]
+
 def set_nodes(g, key, value):
     for n in g.nodes:
         g.nodes[n][key] = value
@@ -283,6 +311,11 @@ def set_nodes_labpos(g, value=node_labpos):
     set_nodes(g, 'labpos', value)
 
 
+def unset_edges(g, key):
+    for n, m in g.edges:
+        if key in g.edges[n, m]:
+            g.edges[n, m][key]
+
 def set_edges(g, key, value):
     for n, m in g.edges:
         g.nodes[n, m][key] = value
@@ -296,16 +329,49 @@ def set_edges_color(g, value=edge_color):
 def set_edges_labfrac(g, value=edge_labfrac):
     set_edges(g, 'labfrac', value)
 
-def set_edges_labflip(g, value=edge_labflip):
-    set_edges(g, 'labflip', value)
-
 def set_edges_labdist(g, value=edge_labdist):
     set_edges(g, 'labdist', value)
 
+def set_edges_labflip(g, value=edge_labflip):
+    set_edges(g, 'labflip', value)
 
-def label(g):
+
+def label_nodes(g, key=None):
     for n in g.nodes:
-        g.nodes[n]['label'] = str(n)
+        if key is None:
+            if isinstance(n, str):
+                g.nodes[n]['label'] = n
+            else:
+                g.nodes[n]['label'] = str(n)
+        else:
+            if key in g.nodes[n]:
+                value = g.nodes[n][key]
+
+                if isinf(value):
+                    g.nodes[n]['label'] = '∞'
+                elif isinstance(value, str):
+                    g.nodes[n]['label'] = value
+                else:
+                    g.nodes[n]['label'] = str(value)
+            else:
+                if 'label' in g.nodes[n]:
+                    del g.nodes[n]['label']
+
+
+def label_edges(g, key):
+    for n, m in g.edges:
+        if key in g.edges[n, m]:
+            value = g.edges[n, m][key]
+
+            if isinf(value):
+                g.nodes[n]['label'] = '∞'
+            elif isinstance(value, str):
+                g.edges[n, m]['label'] = value
+            else:
+                g.edges[n, m]['label'] = str(value)
+        else:
+            if 'label' in g.edges[n, m]:
+                del g.edges[n, m]['label']
 
 
 def move(g, key, *args, **kwargs):
@@ -317,10 +383,14 @@ def move(g, key, *args, **kwargs):
     _normalize_positions(g)
 
 
-def load(path, layout='random', *args, **kwargs):
+def load(path, key='random', *args, **kwargs):
     g = networkx.read_gml(path, label='id')
 
+    if isinstance(g, networkx.MultiGraph):
+        raise TypeError('plotnetx does not support multigraphs')
+
     has_positions = True
+
     for n in g.nodes:
         if 'x' not in g.nodes[n] or 'y' not in g.nodes[n]:
             has_positions = False
@@ -334,15 +404,34 @@ def load(path, layout='random', *args, **kwargs):
 
         _normalize_positions(g)
     else:
-        move(g, layout, *args, **kwargs)
+        move(g, key, *args, **kwargs)
+
+    for n, m in g.edges:
+        if 'labflip' in g.edges[n, m]:
+            value = g.edges[n, m]['labflip']
+
+            if value == 0 or value == 1:
+                g.edges[n, m]['labflip'] = bool(value)
+            else:
+                raise ValueError("attribute 'labflip' of edge ({}, {}) must be 0 or 1".format(n, m))
 
     return g
 
 
-def show(g, toolbar=False):
-    local_width, local_height = _build_graph_key(g)
+def show(g, nodes_key=None, edges_key=None, toolbar=False):
+    if nodes_key is not None:
+        label_nodes(g, nodes_key)
+
+    if edges_key is not None:
+        label_edges(g, edges_key)
+
+    local_width, local_height, local_bottom, local_left, local_right, local_top = _build_graph_key(g)
+
+    local_width += local_left + local_right
+    local_height += local_bottom + local_top
 
     node_traces = {}
+    node_label_trace = _build_node_label_trace(local_width, local_height, local_bottom, local_left, local_right, local_top)
     for n in g.nodes:
         size, color, labpos = _build_node_key(g, n)
         key = (size, color, labpos)
@@ -353,15 +442,16 @@ def show(g, toolbar=False):
     edge_traces = {}
     edge_label_trace = _build_edge_label_trace()
     for n, m in g.edges:
-        size, width, color, labfrac, labflip, labdist = _build_edge_key(g, n, m)
-        key = (width, color, labfrac, labflip, labdist)
+        size, width, color, labfrac, labdist, labflip = _build_edge_key(g, n, m)
+        key = (width, color, labfrac, labdist, labflip)
         if key not in edge_traces:
             edge_traces[key] = _build_edge_trace(width, color)
-        _add_edge(g, local_width, local_height, n, m, size, width, edge_traces[key], edge_label_trace, labfrac, labflip, labdist)
+        _add_edge(g, local_width, local_height, n, m, size, width, edge_traces[key], edge_label_trace, labfrac, labdist, labflip)
 
     data = list(edge_traces.values())
     data.append(edge_label_trace)
     data.extend(node_traces.values())
+    data.append(node_label_trace)
 
     layout = _build_layout(local_width, local_height)
 
@@ -377,14 +467,24 @@ def show(g, toolbar=False):
     plotly.offline.iplot(figure, config={'displayModeBar': toolbar}, show_link=False)
 
 
-def setup():
+def start():
     _frames.clear()
 
 
-def snap(g):
-    local_width, local_height = _build_graph_key(g)
+def rec(g, nodes_key=None, edges_key=None):
+    if nodes_key is not None:
+        label_nodes(g, nodes_key)
+
+    if edges_key is not None:
+        label_edges(g, edges_key)
+
+    local_width, local_height, local_bottom, local_left, local_right, local_top = _build_graph_key(g)
+
+    local_width += local_left + local_right
+    local_height += local_bottom + local_top
 
     node_traces = []
+    node_label_trace = _build_node_label_trace(local_width, local_height, local_bottom, local_left, local_right, local_top)
     for n in g.nodes:
         size, color, labpos = _build_node_key(g, n)
         node_trace = _build_node_trace(size, color, labpos)
@@ -394,14 +494,15 @@ def snap(g):
     edge_traces = []
     edge_label_trace = _build_edge_label_trace()
     for n, m in g.edges:
-        size, width, color, labfrac, labflip, labdist = _build_edge_key(g, n, m)
+        size, width, color, labfrac, labdist, labflip = _build_edge_key(g, n, m)
         edge_trace = _build_edge_trace(width, color)
         edge_traces.append(edge_trace)
-        _add_edge(g, local_width, local_height, n, m, size, width, edge_trace, edge_label_trace, labfrac, labflip, labdist)
+        _add_edge(g, local_width, local_height, n, m, size, width, edge_trace, edge_label_trace, labfrac, labdist, labflip)
 
     data = edge_traces
     data.append(edge_label_trace)
     data.extend(node_traces)
+    data.append(node_label_trace)
 
     _frames.append({
         'number_of_nodes': g.number_of_nodes(),
